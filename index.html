@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>定位 + 天气</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; padding: 16px; max-width: 720px; margin: auto; }
+  h1 { font-size: 22px; margin-bottom: 10px; }
+  label { display:block; margin:8px 0 4px; }
+  input[type="text"], input[type="password"] { width:100%; padding:6px; }
+  button { margin-top:8px; padding:8px 14px; border:none; background:#2196F3; color:white; border-radius:6px; }
+  button:hover { background:#1976D2; cursor:pointer; }
+  #result { background:#f0f8ff; padding:12px; margin-top:12px; border-radius:6px; }
+  .box { border:1px solid #ddd; padding:10px; border-radius:6px; margin-top:12px; }
+  #apikeyBox { display:none; }
+</style>
+</head>
+<body>
+<h1>定位 + 天气</h1>
+
+<button onclick="getLocation()">获取当前位置</button>
+<div id="time"></div>
+<div id="result"></div>
+
+<div class="box">
+  <h3>手动查询</h3>
+  <label>输入地址：</label>
+  <input type="text" id="addrInput" placeholder="如：南京 / 某某镇 / 某某村 / 某街道" />
+  <button onclick="searchAddress()">查询</button>
+
+  <label>输入经纬度 (lat,lon)：</label>
+  <input type="text" id="latlonInput" placeholder="如：31.2304,121.4737" />
+  <button onclick="searchLatLon()">查询</button>
+</div>
+
+<div class="box" id="apikeyBox">
+  <h3>密钥设置（镇以下查询才需要）</h3>
+  <label>百度密钥：</label>
+  <input type="password" id="baiduKey" placeholder="输入百度API密钥" />
+  <label>高德密钥：</label>
+  <input type="password" id="gaodeKey" placeholder="输入高德API密钥" />
+  <label>腾讯密钥：</label>
+  <input type="password" id="tencentKey" placeholder="输入腾讯API密钥" />
+</div>
+
+<script>
+// ====== 公共函数 ======
+function showResult(data) {
+  document.getElementById("result").innerHTML = data;
+  document.getElementById("time").innerText = "时间：" + new Date().toLocaleString();
+}
+
+// 天气状况转换
+function getWeatherDesc(code) {
+  if (code >= 0 && code <= 3) return "晴";
+  if (code >= 45 && code <= 48) return "多云/雾";
+  if (code >= 51 && code <= 67) return "小雨";
+  if (code >= 71 && code <= 77) return "小雪";
+  if (code >= 80 && code <= 82) return "阵雨";
+  if (code >= 95) return "雷雨";
+  return "未知";
+}
+
+// 获取天气
+function getWeather(lat, lon, callback) {
+  fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`)
+    .then(r => r.json())
+    .then(w => {
+      if (w.current_weather) {
+        let temp = w.current_weather.temperature;
+        let code = w.current_weather.weathercode;
+        let desc = getWeatherDesc(code);
+        callback(`${desc} ${temp}℃`);
+      } else {
+        callback("未知");
+      }
+    })
+    .catch(() => callback("未知"));
+}
+
+// ====== 获取当前位置 ======
+function getLocation() {
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(success, geoError, {timeout:5000});
+  } else {
+    fallbackByIP();
+  }
+}
+
+function success(pos) {
+  let lat = pos.coords.latitude.toFixed(6);
+  let lon = pos.coords.longitude.toFixed(6);
+  queryByLatLon(lat, lon);
+}
+
+function geoError(err) {
+  console.warn("HTML5定位失败:", err.message);
+  fallbackByIP();
+}
+
+// ====== IP 定位兜底 ======
+function fallbackByIP() {
+  fetch("https://ipapi.co/json/")
+    .then(r => r.json())
+    .then(d => {
+      if (d && d.latitude && d.longitude) {
+        let lat = d.latitude;
+        let lon = d.longitude;
+        queryByLatLon(lat, lon);
+      } else {
+        alert("无法获取定位");
+      }
+    })
+    .catch(() => alert("IP定位失败"));
+}
+
+// ====== 地址查询 ======
+function searchAddress() {
+  let addr = document.getElementById("addrInput").value.trim();
+  if (!addr) { alert("请输入地址"); return; }
+
+  let keywords = ["镇", "村", "乡", "街道"];
+  if (keywords.some(k => addr.includes(k))) {
+    document.getElementById("apikeyBox").style.display = "block";
+    alert("检测到输入了镇/村/乡/街道，需要密钥，请填写！");
+  }
+
+  fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${addr}&accept-language=zh-CN`)
+    .then(res => res.json())
+    .then(list => {
+      if (list.length === 0) { alert("未找到地址"); return; }
+      let item = list[0];
+      queryByLatLon(item.lat, item.lon);
+    })
+    .catch(() => alert("查询失败"));
+}
+
+// ====== 经纬度查询 ======
+function searchLatLon() {
+  let val = document.getElementById("latlonInput").value.trim();
+  if (!val) { alert("请输入经纬度"); return; }
+  let parts = val.split(",");
+  if (parts.length !== 2) { alert("格式错误，应为 lat,lon"); return; }
+  let lat = parseFloat(parts[0]);
+  let lon = parseFloat(parts[1]);
+  if (isNaN(lat) || isNaN(lon)) { alert("经纬度无效"); return; }
+  queryByLatLon(lat, lon);
+}
+
+// ====== 经纬度查详细地址 + 天气 ======
+function queryByLatLon(lat, lon) {
+  fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=zh-CN`)
+    .then(r => r.json())
+    .then(data => {
+      let addrFull = data.display_name || "未知";
+      let province = data.address.state || "";
+      let city = data.address.city || data.address.town || data.address.county || "";
+      let county = data.address.county || "";
+      let town = data.address.town || data.address.village || data.address.suburb || "";
+
+      getWeather(lat, lon, (weatherStr) => {
+        showResult(`经纬度：${lat},${lon}<br>详细地址：${addrFull}<br>所属地区：${province}${city}${county}${town}<br>天气：${weatherStr}`);
+      });
+    })
+    .catch(() => alert("获取信息失败"));
+}
+</script>
+</body>
+</html>
